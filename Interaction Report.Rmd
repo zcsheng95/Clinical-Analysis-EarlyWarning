@@ -1,0 +1,144 @@
+---
+title: "Interaction Report"
+author: "Jeff"
+date: "6/16/2018"
+output: html_document
+---
+### Setting up
+```{r,echo=FALSE,message=FALSE}
+mydir <- "/dcri/cpm/projects/pro00065513_HospitalOutcomes/EWS/STAFF/jeff/"
+datadir <- "/dcri/cpm/projects/pro00065513_HospitalOutcomes/EWS/DATA/analdata"
+setwd(mydir)
+library(data.table)
+source("Functions aggregation.R")
+source("ComputeNEWS.R")
+library(tidyverse)
+library(scales)
+```
+
+### Read in the data
+```{r,echo=FALSE,message=FALSE}
+setwd(datadir)
+ews = fread(input = "/dcri/cpm/projects/pro00065513_HospitalOutcomes/EWS/DATA/analdata/BinaryOutcome_6hr.csv", header = TRUE)
+```
+
+### Data Setting
+```{r,echo=FALSE,message=FALSE}
+list_of_index = list(ews[,'Resp'],ews[,'SpO2'],ews[,'O2'],ews[,'Temp'],ews[,'SYS'],ews[,'Pulse'],ews[,'ConsciousnessNew'])
+NEWS = ComputeNEWS(ews,list_of_index)
+scored_ews = cbind(ews,NEWS)
+
+
+### Subset ID into two group:
+####  1. Who has ever had a NEWS above 7 / event
+####	2. Who has never had a NEWS above 7 / event
+####	3. Who has ever had a NEWS above 7 /  no event
+####  4. Who has never had a NEWS above 7 / no event
+
+H_eventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS>7,Event==1) %>% select(ID)
+L_eventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS<=7,Event==1) %>% select(ID)
+H_noeventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS>7,Event==0) %>% select(ID)
+L_noeventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS<=7,Event==0) %>% select(ID)
+
+#### Subset by ID
+
+Highevent <- scored_ews %>% filter(ID %in% H_eventID$ID)
+Lowevent <- scored_ews %>% filter(ID %in% L_eventID$ID)
+HighNoevent <- scored_ews %>% filter(ID %in% H_noeventID$ID)
+LowNoevent <- scored_ews %>% filter(ID %in% L_noeventID$ID)
+
+
+
+### Single row for each patient
+##### Change lab status function  
+select_status <- function(vec){
+  res = vec[length(vec)]
+  if(res == "High"|res == "Low"){
+    res = "Abnormal"
+  }
+  return(res)
+} 
+
+tmp1 <- Highevent %>% group_by(ID)%>%select(-c(DIA,Resp,SpO2,Temp,SYS,Pulse,NEWS,CKValue:culture)) %>% summarise_all(max)
+tmp1$Group = 'High'
+tmp2 <-Highevent %>% group_by(ID)%>% select(ID,contains('Value')) %>% summarise_all(select_status)
+tmp3 <- Highevent %>% group_by(ID)%>%select(ID,Resp,SpO2,Temp,SYS,Pulse) %>% summarise_all(mean)
+
+he_grp <- Reduce(function(...)inner_join(...,by="ID"),x =list(tmp1,tmp2,tmp3))
+  
+tmp1 <- HighNoevent %>% group_by(ID)%>%select(-c(DIA,Resp,SpO2,Temp,SYS,Pulse,NEWS,CKValue:culture)) %>% summarise_all(max)
+tmp1$Group = 'High'
+tmp2 <-HighNoevent %>% group_by(ID)%>% select(ID,contains('Value')) %>% summarise_all(select_status)
+tmp3 <- HighNoevent %>% group_by(ID)%>%select(ID,Resp,SpO2,Temp,SYS,Pulse) %>% summarise_all(mean)
+
+hne_grp <- Reduce(function(...)inner_join(...,by="ID"),x =list(tmp1,tmp2,tmp3))
+
+
+tmp1 <- Lowevent %>% group_by(ID)%>%select(-c(DIA,Resp,SpO2,Temp,SYS,Pulse,NEWS,CKValue:culture)) %>% summarise_all(max)
+tmp1$Group = 'Low'
+tmp2 <-Lowevent %>% group_by(ID)%>% select(ID,contains('Value')) %>% summarise_all(select_status)
+tmp3 <- Lowevent %>% group_by(ID)%>%select(ID,Resp,SpO2,Temp,SYS,Pulse) %>% summarise_all(mean)
+
+le_grp <- Reduce(function(...)inner_join(...,by="ID"),x =list(tmp1,tmp2,tmp3))
+
+tmp1 <- LowNoevent %>% group_by(ID)%>%select(-c(DIA,Resp,SpO2,Temp,SYS,Pulse,NEWS,CKValue:culture)) %>% summarise_all(max)
+tmp1$Group = 'Low'
+tmp2 <-LowNoevent %>% group_by(ID)%>% select(ID,contains('Value')) %>% summarise_all(select_status)
+tmp3 <-LowNoevent %>% group_by(ID)%>%select(ID,Resp,SpO2,Temp,SYS,Pulse) %>% summarise_all(mean)
+
+lne_grp <- Reduce(function(...)inner_join(...,by="ID"),x =list(tmp1,tmp2,tmp3))
+ews_grp <-rbind(he_grp,hne_grp,le_grp,lne_grp)
+
+ews_grp[,6:49] <- lapply(ews_grp[,6:49],as.factor)
+ews_grp$SEX <- as.factor(ews_grp$SEX)
+ews_grp$Group <- relevel(ews_grp$Group,ref = "Low")
+for(i in 20:49){
+  ews_grp[,i] <- relevel(unlist(ews_grp[,i]),ref = "None")
+}
+```
+### Rearrange the data
+```{r,echo = FALSE,message=FALSE}
+colnames(ews_grp)
+demo <- ews_grp%>%dplyr::select(SEX,AGE,RACEnew,TimeFromAdmission)
+como <- ews_grp%>%dplyr::select(SURGERY,contains("HX"))
+lab <- ews_grp%>%dplyr::select(contains("Value"))
+ews_grp_reord <- cbind(demo,como,lab) 
+```
+
+### Heatmap
+```{r,echo = FALSE,message=FALSE}
+htm <- ews_grp_reord%>%dplyr::select(-AGE,-TimeFromAdmission) 
+tb = list()
+for(i in colnames(htm)){
+  tb[[i]] = creat_tb(i)
+}
+htbl = do.call(rbind,tb)
+hdf = as.data.frame(htbl)
+hdf$names = rownames(hdf)
+hdf <- melt(hdf,id = "names")
+ggplot(data = hdf,aes(x = variable, y = names)) + 
+  geom_tile(aes(fill = value)) + 
+  scale_fill_gradientn(colours = c("steelblue","white","maroon"),
+                       values = rescale(x = c(min(hdf$value),1.0,max(hdf$value))),
+                       guide = "colorbar",
+                       limits = c(min(hdf$value),max(hdf$value))) +
+  ylab("List of Variables ") +
+  xlab("NEWS Group") +
+  ggtitle(label = "Heat map for odds ratio")+
+  theme(legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(size=10),
+        axis.title=element_text(size=12,face="bold"),
+        axis.text.x = element_text(angle = 0, hjust = 1)) +
+  labs(fill = "Odds Ratio")
+```
+
+### Odds ratio with se
+```{r}
+inter.plot("ldhValue")
+inter.plot("HX_MALIGNANCY")
+inter.plot("HemValue")
+inter.plot("crpValue")
+inter.plot("BUNValue")
+```
+

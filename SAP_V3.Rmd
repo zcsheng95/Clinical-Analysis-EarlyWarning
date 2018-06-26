@@ -1,0 +1,427 @@
+---
+title: "4 subsets"
+author: "Jeff"
+date: "4/13/2018"
+output: html_document
+---
+### Read in Files and Load packages
+```{r first, echo=FALSE,message=FALSE}
+mydir <- "/dcri/cpm/projects/pro00065513_HospitalOutcomes/EWS/STAFF/jeff/"
+datadir <- "/dcri/cpm/projects/pro00065513_HospitalOutcomes/EWS/DATA/analdata"
+setwd(datadir)
+library(data.table)
+ews = fread(input = "/dcri/cpm/projects/pro00065513_HospitalOutcomes/EWS/DATA/analdata/BinaryOutcome_6hr.csv", header = TRUE)
+setwd(mydir)
+source("ComputeNEWS.R")
+library(tidyverse)
+library(tableone)
+```
+
+### Compute NEWS for each observation
+```{r,echo=FALSE,message=FALSE}
+list_of_index = list(ews[,'Resp'],ews[,'SpO2'],ews[,'O2'],ews[,'Temp'],ews[,'SYS'],ews[,'Pulse'],ews[,'ConsciousnessNew'])
+NEWS = ComputeNEWS(ews,list_of_index)
+scored_ews = cbind(ews,NEWS)
+```
+
+### Subset ID into two group:
+####  1. Who has ever had a NEWS above 7 / event
+####	2. Who has never had a NEWS above 7 / event
+####	3. Who has ever had a NEWS above 7 /  no event
+####  4. Who has never had a NEWS above 7 / no event
+```{r,echo=FALSE,message=FALSE}
+### Note there are some overlapping 
+H_eventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS>7,Event==1) %>% select(ID)
+L_eventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS<=7,Event==1) %>% select(ID)
+H_noeventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS>7,Event==0) %>% select(ID)
+L_noeventID = scored_ews%>% group_by(ID)%>% summarise(MaxNEWS= max(NEWS),Event = max(Event6Hr))%>%filter(MaxNEWS<=7,Event==0) %>% select(ID)
+
+```
+
+```{r,echo=FALSE,message=FALSE}
+## Check dimension
+sum(nrow(H_eventID),nrow(L_eventID),nrow(H_noeventID),nrow(L_noeventID))
+scored_ews %>% select(ID)%>% distinct() %>% nrow()
+```
+```{r,echo=FALSE,message=FALSE}
+### Select ID
+Highevent <- scored_ews %>% filter(ID %in% H_eventID$ID)
+Lowevent <- scored_ews %>% filter(ID %in% L_eventID$ID)
+HighNoevent <- scored_ews %>% filter(ID %in% H_noeventID$ID)
+LowNoevent <- scored_ews %>% filter(ID %in% L_noeventID$ID)
+```
+
+### Demographics Information
+#### Table one
+```{r,echo=FALSE,message=FALSE}
+HE.demographics = select(Highevent,ID,SEX,AGE,RACEnew)
+LE.demographics = select(Lowevent,ID,SEX,AGE,RACEnew)
+HN.demographics = select(HighNoevent,ID,SEX,AGE,RACEnew)
+LN.demographics = select(LowNoevent,ID,SEX,AGE,RACEnew)
+
+HE.demographics$GROUP  = "High & Event"
+LE.demographics$GROUP = "Low & Event"
+HN.demographics$GROUP = "High & NoEvent"
+LN.demographics$GROUP = "Low & NoEvent"
+HE.demographics= HE.demographics %>% group_by(ID) %>% summarise(SEX = unique(SEX), AGE = mean(AGE), RACEnew = unique(RACEnew),GROUP = unique(GROUP))
+LE.demographics = LE.demographics %>% group_by(ID) %>% summarise(SEX = unique(SEX), AGE = mean(AGE), RACEnew = unique(RACEnew),GROUP = unique(GROUP))
+HN.demographics= HN.demographics %>% group_by(ID) %>% summarise(SEX = unique(SEX), AGE = mean(AGE), RACEnew = unique(RACEnew),GROUP = unique(GROUP))
+LN.demographics= LN.demographics %>% group_by(ID) %>% summarise(SEX = unique(SEX), AGE = mean(AGE), RACEnew = unique(RACEnew),GROUP = unique(GROUP))
+
+
+
+demographics <- rbind(HE.demographics,LE.demographics,HN.demographics,LN.demographics)
+demographics.age <- as.data.frame(table(demographics[,c('SEX','GROUP')]))
+demographics.race <- as.data.frame(table(demographics[,c('RACEnew','GROUP')]))
+
+
+table1 <- CreateTableOne(vars = colnames(demographics)[-c(1,ncol(demographics))],strata = "GROUP", data = demographics)
+print(table1, showAllLevels = TRUE)
+
+```
+#### Plot
+```{r,echo=FALSE,message=FALSE}
+g<-ggplot(demographics[,c('AGE','GROUP')],aes(x= AGE,colour = GROUP ))
+g+geom_density()+ggtitle(label = "Age distribution among Different group")
+g1<-ggplot(demographics[,c('AGE','GROUP')],aes(y= AGE,x= GROUP ))
+g1+geom_boxplot(aes(fill = GROUP))+ggtitle(label = "Age distribution among Different group")
+
+plot.age = rbind(demographics.age %>% filter(GROUP == 'High & Event') %>% mutate(Freq = Freq/nrow(HE.demographics)),demographics.age %>% filter(GROUP == 'Low & Event') %>% mutate(Freq = Freq/nrow(LE.demographics)),demographics.age %>% filter(GROUP == 'High & NoEvent') %>% mutate(Freq = Freq/nrow(HN.demographics)),demographics.age %>% filter(GROUP == 'Low & NoEvent') %>% mutate(Freq = Freq/nrow(LN.demographics)))
+plot.race = rbind(demographics.race %>% filter(GROUP == 'High & Event') %>% mutate(Freq = Freq/nrow(HE.demographics)),demographics.race %>% filter(GROUP == 'Low & Event') %>% mutate(Freq = Freq/nrow(LE.demographics)),demographics.race %>% filter(GROUP == 'High & NoEvent') %>% mutate(Freq = Freq/nrow(HN.demographics)),demographics.race %>% filter(GROUP == 'Low & NoEvent') %>% mutate(Freq = Freq/nrow(LN.demographics)))
+demographics.age$Freq = round(demographics.age$Freq, digits = 2)
+demographics.race$Freq = round(demographics.race$Freq, digits = 2)
+
+g2<-ggplot(plot.age, aes(x = SEX,y = Freq))
+g2+geom_bar(aes(fill = GROUP), position = 'dodge', stat = 'identity') + ggtitle(label = "Sex distribution among Different group")
+
+g3<-ggplot(plot.race, aes(x = RACEnew,y = Freq))
+g3+geom_bar(aes(fill = GROUP), position = 'dodge', stat = 'identity') + ggtitle(label = "Race distribution among Different group")
+
+
+
+```
+### Comorbidities Information
+#### Table one
+```{r,echo=FALSE,message=FALSE}
+HE.comorbid = Highevent[,c(1,13:22)]
+LE.comorbid = Lowevent[,c(1,13:22)]
+HN.comorbid = HighNoevent[,c(1,13:22)]
+LN.comorbid = LowNoevent[,c(1,13:22)]
+
+
+HE.comorbid$GROUP  = "High & Event"
+LE.comorbid$GROUP = "Low & Event"
+HN.comorbid$GROUP = "High & NoEvent"
+LN.comorbid$GROUP = "Low & NoEvent"
+
+HE.comorbid = HE.comorbid %>% group_by(ID) %>% summarise(Diabetes = max(HX_DIABETES), Malignancy = max(HX_MALIGNANCY), CKD = max(HX_CKD),Copd = max(HX_COPD), MI = max(HX_MI),Stroke = max(HX_STROKE),HIV = max(HX_HIV),Postop = max(HX_POSTOP), Tarnsplant = max(HX_TRANSPLANT),Surgery =max(SURGERY),GROUP = unique(GROUP))
+
+LE.comorbid = LE.comorbid %>% group_by(ID) %>% summarise(Diabetes = max(HX_DIABETES), Malignancy = max(HX_MALIGNANCY), CKD = max(HX_CKD),Copd = max(HX_COPD), MI = max(HX_MI),Stroke = max(HX_STROKE),HIV = max(HX_HIV),Postop = max(HX_POSTOP), Tarnsplant = max(HX_TRANSPLANT),Surgery =max(SURGERY),GROUP = unique(GROUP))
+
+HN.comorbid = HN.comorbid %>% group_by(ID) %>% summarise(Diabetes = max(HX_DIABETES), Malignancy = max(HX_MALIGNANCY), CKD = max(HX_CKD),Copd = max(HX_COPD), MI = max(HX_MI),Stroke = max(HX_STROKE),HIV = max(HX_HIV),Postop = max(HX_POSTOP), Tarnsplant = max(HX_TRANSPLANT),Surgery =max(SURGERY),GROUP = unique(GROUP))
+
+LN.comorbid = LN.comorbid %>% group_by(ID) %>% summarise(Diabetes = max(HX_DIABETES), Malignancy = max(HX_MALIGNANCY), CKD = max(HX_CKD),Copd = max(HX_COPD), MI = max(HX_MI),Stroke = max(HX_STROKE),HIV = max(HX_HIV),Postop = max(HX_POSTOP), Tarnsplant = max(HX_TRANSPLANT),Surgery =max(SURGERY),GROUP = unique(GROUP))
+
+comorbid = rbind(HE.comorbid,LE.comorbid,HN.comorbid,LN.comorbid)
+comorbid = as.data.frame(apply(comorbid,2,factor))
+
+table2  = CreateTableOne( vars =  colnames(comorbid)[-c(1,ncol(comorbid))], strata = "GROUP", data = comorbid)
+print(table2,showAllLevels = TRUE)
+```
+
+#### Plot
+```{r,echo=FALSE,message=FALSE}
+gathered_co = gather(comorbid[,-1],key ='GROUP',value = "Cormorbidies")
+colnames(gathered_co) = c("Group","Cormorbidies","Count")
+plot_data = as.data.frame(table(gathered_co))
+plot_data = plot_data[plot_data$Count == 1,]
+plot_data = rbind(plot_data %>% filter(Group == 'High & Event') %>% mutate(Freq = Freq/nrow(HE.comorbid)),plot_data %>% filter(Group == 'Low & Event') %>% mutate(Freq = Freq/nrow(LE.comorbid)),plot_data %>% filter(Group == 'High & NoEvent') %>% mutate(Freq = Freq/nrow(HN.comorbid)),plot_data %>% filter(Group == 'Low & NoEvent') %>% mutate(Freq = Freq/nrow(LN.comorbid)))
+
+g4<- ggplot(plot_data,aes(x = Cormorbidies, y = Freq)) + geom_bar(aes(fill = Group), position = 'dodge', stat = 'identity') + ggtitle(label = "Cormorbiditties distribution among Different group")
+g4+theme(
+      axis.text.x  = element_text(size = 10))
+```
+
+### Length of Stay for each patient
+#### Plots for Length of Stay
+```{r,echo=FALSE,message=FALSE}
+HE.los = select(Highevent,ID,TimeFromAdmission)
+LE.los = select(Lowevent,ID,TimeFromAdmission)
+HN.los = select(HighNoevent,ID,TimeFromAdmission)
+LN.los = select(LowNoevent,ID,TimeFromAdmission)
+
+
+
+HE.los  = HE.los %>% group_by(ID) %>% summarise(TimeFromAdmission = max(TimeFromAdmission))
+LE.los = LE.los %>% group_by(ID) %>% summarise(TimeFromAdmission = max(TimeFromAdmission))
+HN.los  = HN.los %>% group_by(ID) %>% summarise(TimeFromAdmission = max(TimeFromAdmission))
+LN.los = LN.los %>% group_by(ID) %>% summarise(TimeFromAdmission = max(TimeFromAdmission))
+
+HE.los$GROUP = "High & Event"
+LE.los$GROUP = "Low & Event"
+HN.los$GROUP = "High & NoEvent"
+LN.los$GROUP = "Low & NoEvent"
+
+
+combined_los = rbind(HE.los, LE.los, HN.los, LN.los)
+Lengthstay = combined_los %>% group_by(GROUP) %>% summarise(mean = mean(TimeFromAdmission), max = max(TimeFromAdmission), min = min(TimeFromAdmission),median = median(TimeFromAdmission))
+Lengthstay[,2:5] = round(Lengthstay[,2:5],digits = 3)
+Lengthstay
+g5<- ggplot(combined_los)
+g5+geom_boxplot(aes(x=GROUP, y = TimeFromAdmission,fill = GROUP))
+g5+geom_density(aes(x = TimeFromAdmission, colour = GROUP))
+```
+### Vitals for each patient
+#### Table one
+```{r,echo=FALSE,message=FALSE}
+HE.vitals = select(Highevent,ID,Resp,SpO2,O2,Temp,SYS,Pulse,ConsciousnessNew)
+LE.vitals = select(Lowevent,ID,Resp,SpO2,O2,Temp,SYS,Pulse,ConsciousnessNew)
+HN.vitals = select(HighNoevent,ID,Resp,SpO2,O2,Temp,SYS,Pulse,ConsciousnessNew)
+LN.vitals = select(LowNoevent,ID,Resp,SpO2,O2,Temp,SYS,Pulse,ConsciousnessNew)
+
+
+
+HE.vitals$GROUP = "High & Event"
+LE.vitals$GROUP = "Low & Event"
+HN.vitals$GROUP = "High & NoEvent"
+LN.vitals$GROUP = "Low & NoEvent"
+
+
+HE.vitals$ConsciousnessNew <- factor(HE.vitals$ConsciousnessNew)
+LE.vitals$ConsciousnessNew <- factor(LE.vitals$ConsciousnessNew)
+HN.vitals$ConsciousnessNew <- factor(HN.vitals$ConsciousnessNew)
+LN.vitals$ConsciousnessNew <- factor(LN.vitals$ConsciousnessNew)
+
+
+HE.vitals = HE.vitals %>% group_by(ID) %>% summarise(MeanResp = mean(Resp),MedianResp = median(Resp),MaxResp = max(Resp),MinResp = min(Resp), MeanSpO2 = mean(SpO2),MedianSpO2 = median(SpO2),MaxSpO2 = max(SpO2),MinSpO2 = min(SpO2),MeanTemp = mean(Temp),MedianTemp = median(Temp),MaxTemp = max(Temp),MinTemp = min(Temp),MeanSYS = mean(SYS),MedianSYS = median(SYS),MaxSYS = max(SYS),MinSYS = min(SYS),MeanPulse = mean(Pulse),MedianPulse = median(Pulse),MaxPulse = max(Pulse),MinPulse = min(Pulse),O2 = max(O2),ConsciousnessNew = max(as.numeric(ConsciousnessNew)),GROUP = unique(GROUP))
+
+LE.vitals = LE.vitals %>% group_by(ID) %>% summarise(MeanResp = mean(Resp),MedianResp = median(Resp),MaxResp = max(Resp),MinResp = min(Resp), MeanSpO2 = mean(SpO2),MedianSpO2 = median(SpO2),MaxSpO2 = max(SpO2),MinSpO2 = min(SpO2),MeanTemp = mean(Temp),MedianTemp = median(Temp),MaxTemp = max(Temp),MinTemp = min(Temp),MeanSYS = mean(SYS),MedianSYS = median(SYS),MaxSYS = max(SYS),MinSYS = min(SYS),MeanPulse = mean(Pulse),MedianPulse = median(Pulse),MaxPulse = max(Pulse),MinPulse = min(Pulse),O2 = max(O2),ConsciousnessNew = max(as.numeric(ConsciousnessNew)),GROUP = unique(GROUP))
+
+HN.vitals = HN.vitals %>% group_by(ID) %>% summarise(MeanResp = mean(Resp),MedianResp = median(Resp),MaxResp = max(Resp),MinResp = min(Resp), MeanSpO2 = mean(SpO2),MedianSpO2 = median(SpO2),MaxSpO2 = max(SpO2),MinSpO2 = min(SpO2),MeanTemp = mean(Temp),MedianTemp = median(Temp),MaxTemp = max(Temp),MinTemp = min(Temp),MeanSYS = mean(SYS),MedianSYS = median(SYS),MaxSYS = max(SYS),MinSYS = min(SYS),MeanPulse = mean(Pulse),MedianPulse = median(Pulse),MaxPulse = max(Pulse),MinPulse = min(Pulse),O2 = max(O2),ConsciousnessNew = max(as.numeric(ConsciousnessNew)),GROUP = unique(GROUP))
+
+LN.vitals = LN.vitals %>% group_by(ID) %>% summarise(MeanResp = mean(Resp),MedianResp = median(Resp),MaxResp = max(Resp),MinResp = min(Resp), MeanSpO2 = mean(SpO2),MedianSpO2 = median(SpO2),MaxSpO2 = max(SpO2),MinSpO2 = min(SpO2),MeanTemp = mean(Temp),MedianTemp = median(Temp),MaxTemp = max(Temp),MinTemp = min(Temp),MeanSYS = mean(SYS),MedianSYS = median(SYS),MaxSYS = max(SYS),MinSYS = min(SYS),MeanPulse = mean(Pulse),MedianPulse = median(Pulse),MaxPulse = max(Pulse),MinPulse = min(Pulse),O2 = max(O2),ConsciousnessNew = max(as.numeric(ConsciousnessNew)),GROUP = unique(GROUP))
+
+vitals = rbind(HE.vitals, LE.vitals, HN.vitals, LN.vitals)
+vitals$O2 = factor(vitals$O2)
+levels(vitals$O2) = c("Never","Ever")
+vitals$ConsciousnessNew = factor(vitals$ConsciousnessNew)
+levels(vitals$ConsciousnessNew) = c("Alert","notAlert")
+table3 = CreateTableOne(vars = colnames(vitals)[-c(1,ncol(vitals))],strata = "GROUP", data = vitals)
+print(table3, showAllLevels = TRUE)
+```
+#### Plot for Median Vitals
+```{r,echo=FALSE,message=FALSE}
+g1 <- ggplot(vitals) + geom_density(aes(x = MedianPulse,colour = GROUP))+geom_vline(xintercept = c(51,90))
+g1
+g2 <- ggplot(vitals) + geom_density(aes(x = MedianResp,colour = GROUP))+geom_vline(xintercept = c(12,20))
+g2
+g3 <- ggplot(vitals) + geom_density(aes(x = MedianSpO2,colour = GROUP))+geom_vline(xintercept = 96)
+g3
+g4 <- ggplot(vitals) + geom_density(aes(x = MedianTemp,colour = GROUP))+geom_vline(xintercept = c(36.1,38))
+g4
+g5 <- ggplot(vitals) + geom_density(aes(x = MedianSYS,colour = GROUP))+geom_vline(xintercept = c(111,219))
+g5
+
+
+
+# O2 And Consciousness
+plot.cons = as.data.frame(table(vitals[,c("ConsciousnessNew","GROUP")]))
+plot.o2 = as.data.frame(table(vitals[,c("O2","GROUP")]))
+
+
+plot.cons = rbind(plot.cons %>% filter(GROUP == 'High & Event') %>% mutate(Freq = Freq/nrow(HE.vitals)),plot.cons %>% filter(GROUP == 'Low & Event') %>% mutate(Freq = Freq/nrow(LE.vitals)),plot.cons %>% filter(GROUP == 'High & NoEvent') %>% mutate(Freq = Freq/nrow(HN.vitals)),plot.cons %>% filter(GROUP == 'Low & NoEvent') %>% mutate(Freq = Freq/nrow(LN.vitals)))
+
+
+plot.o2 = rbind(plot.o2 %>% filter(GROUP == 'High & Event') %>% mutate(Freq = Freq/nrow(HE.vitals)),plot.o2 %>% filter(GROUP == 'Low & Event') %>% mutate(Freq = Freq/nrow(LE.vitals)),plot.o2 %>% filter(GROUP == 'High & NoEvent') %>% mutate(Freq = Freq/nrow(HN.vitals)),plot.o2 %>% filter(GROUP == 'Low & NoEvent') %>% mutate(Freq = Freq/nrow(LN.vitals)))
+g6 <- ggplot(plot.cons,aes(x = ConsciousnessNew,y=Freq)) + geom_bar(aes(fill= GROUP),position = 'dodge',stat = "identity")
+g6
+g7 <- ggplot(plot.o2,aes(x = O2,y=Freq)) + geom_bar(aes(fill= GROUP),position = 'dodge',stat = "identity")
+g7
+```
+### Labs Information
+#### Table one
+```{r,echo=FALSE,message=FALSE}
+HE.lab = select(Highevent, ID, contains("Value"))
+LE.lab = select(Lowevent, ID, contains("Value"))
+HN.lab = select(HighNoevent, ID, contains("Value"))
+LN.lab = select(LowNoevent, ID, contains("Value"))
+
+select_status <- function(vec){
+  if(any(vec == "High"|vec == "Low")){
+    res = "Abnormal"
+  }
+  else {
+    res = vec[length(vec)]
+  }
+  return(res)
+}
+change_level <- function(x){
+ levels(x)[levels(x) %in% c("High","Low")] <- "Abnormal"
+ levels(x)[levels(x) == "None"] <- "Never Ordered"
+ return(x)
+}
+
+HE.lab = HE.lab %>% group_by(ID) %>% summarise_all(select_status)
+LE.lab = LE.lab %>% group_by(ID) %>% summarise_all(select_status)
+HN.lab = HN.lab %>% group_by(ID) %>% summarise_all(select_status)
+LN.lab = LN.lab %>% group_by(ID) %>% summarise_all(select_status)
+
+HE.lab$GROUP = "High & Event"
+LE.lab$GROUP = "Low & Event"
+HN.lab$GROUP = "High & NoEvent"
+LN.lab$GROUP = "Low & NoEvent"
+lab = rbind(HE.lab,LE.lab,HN.lab,LN.lab)
+
+lab[,-ncol(lab)] = lapply(lab[,-ncol(lab)],change_level)
+lab = lapply(lab, factor)
+lab = as.data.frame(lab)
+levels(lab$DdimerValue) <- c(levels(lab$Ddimer),"Normal")
+
+table4  = CreateTableOne(vars =  colnames(lab)[-c(1,ncol(lab))], strata = "GROUP", data = lab)
+print(table4,showAllLevels = TRUE)
+```
+#### Plots for Labs Comparing Abnormal and Normal distribution 
+```{r,echo=FALSE,message=FALSE}
+gathered_lab = gather(lab[,-1],key =  'GROUP',value = "Labs")
+colnames(gathered_lab) = c("Group","Labs","Status")
+plot_data = as.data.frame(table(gathered_lab))
+
+
+s1 = plot_data%>%filter(Group == "High & Event", Status !="None")
+s2 = plot_data%>%filter(Group == "Low & Event", Status !="None")
+s3 = plot_data%>%filter(Group == "High & NoEvent", Status !="None")
+s4 = plot_data%>%filter(Group == "Low & NoEvent", Status !="None")
+
+
+s5 = plot_data%>%filter(Group == "High & Event", Status =="None")
+s6 = plot_data%>%filter(Group == "Low & Event", Status =="None")
+s7 = plot_data%>%filter(Group == "High & NoEvent", Status =="None")
+s8 = plot_data%>%filter(Group == "Low & NoEvent", Status =="None")
+### Not Robust
+sumorder1 = c()
+for(i in 1:30){
+  sumorder1[i] = s1$Freq[i]+s1$Freq[i+30]
+}
+
+sumorder2 = c()
+for(i in 1:30){
+  sumorder2[i] = s2$Freq[i]+s2$Freq[i+30]
+}
+
+sumorder3 = c()
+for(i in 1:30){
+  sumorder3[i] = s3$Freq[i]+s3$Freq[i+30]
+}
+
+sumorder4 = c()
+for(i in 1:30){
+  sumorder4[i] = s4$Freq[i]+s4$Freq[i+30]
+}
+
+
+
+plot_data.1 = plot_data[plot_data$Status == "Normal",]
+plot_data.1 = rbind(plot_data.1 %>% filter(Group == "High & Event") %>% mutate(Freq = Freq/sumorder1),plot_data.1 %>% filter(Group == "Low & Event") %>% mutate(Freq = Freq/sumorder2),plot_data.1 %>% filter(Group == "High & NoEvent") %>% mutate(Freq = Freq/sumorder3),plot_data.1 %>% filter(Group == "Low & NoEvent") %>% mutate(Freq = Freq/sumorder4))
+
+
+
+
+g8<- ggplot(plot_data.1,aes(x = Labs, y = Freq)) + geom_bar(aes(fill = Group), position = 'dodge', stat = 'identity') + ggtitle(label = "Labs distribution among Different group(Normal)")
+g8+theme(
+      axis.text.x  = element_text(size = 5))
+
+
+plot_data.2 = plot_data[plot_data$Status == "Abnormal",]
+plot_data.2 = rbind(plot_data.2 %>% filter(Group == "High & Event") %>% mutate(Freq = Freq/sumorder1),plot_data.2 %>% filter(Group == "Low & Event") %>% mutate(Freq = Freq/sumorder2),plot_data.2 %>% filter(Group == "High & NoEvent") %>% mutate(Freq = Freq/sumorder3),plot_data.2 %>% filter(Group == "Low & NoEvent") %>% mutate(Freq = Freq/sumorder4))
+
+g9<- ggplot(plot_data.2,aes(x = Labs, y = Freq)) + geom_bar(aes(fill = Group), position = 'dodge', stat = 'identity') + ggtitle(label = "Labs distribution among Different group(Abnormal)")
+g9+theme(
+      axis.text.x  = element_text(size = 5))
+
+plot_data.3 = plot_data[plot_data$Status == "None",]
+plot_data.3 = rbind(plot_data.3 %>% filter(Group == "High & Event") %>% mutate(Freq = Freq/nrow(HE.lab)),plot_data.3 %>% filter(Group == "Low & Event") %>% mutate(Freq = Freq/nrow(LE.lab)),plot_data.3 %>% filter(Group == "High & NoEvent") %>% mutate(Freq = Freq/nrow(HN.lab)),plot_data.3 %>% filter(Group == "Low & NoEvent") %>% mutate(Freq = Freq/nrow(LN.lab)))
+g10<- ggplot(plot_data.3,aes(x = Labs, y = Freq)) + geom_bar(aes(fill = Group), position = 'dodge', stat = 'identity') + ggtitle(label = "Labs distribution among Different group(None)")
+g10+theme(
+      axis.text.x  = element_text(size = 5))
+
+```
+#### Tables for Labs Comparing "High","Low","Normal" Rate
+```{r Lab table , echo=FALSE,message=FALSE,warning=FALSE}
+HE.lab1 = select(Highevent, ID, contains("Value"))
+LE.lab1 = select(Lowevent, ID, contains("Value"))
+HN.lab1 = select(HighNoevent, ID, contains("Value"))
+LN.lab1 = select(LowNoevent, ID, contains("Value"))
+
+HE.lab1$GROUP = "High & Event"
+LE.lab1$GROUP = "Low & Event"
+HN.lab1$GROUP = "High & NoEvent"
+LN.lab1$GROUP = "Low & NoEvent"
+
+lab1 = rbind(HE.lab1, LE.lab1,HN.lab1,LN.lab1)
+
+simplefun<-function(x){x[length(x)]}
+lastorder <-lab1 %>% group_by(ID) %>% summarise_all(simplefun)
+simplefun2<-function(x){
+  kk = x %>% filter(x[,1]!="None")
+  kk[,1]<-factor(unlist(kk[,1]))
+  res = prop.table(table(kk),margin = 2)
+  chi = chisq.test(table(kk))
+  return(list(res,chi))
+  }
+
+
+res = list()
+k=1
+for(i in colnames(lastorder)[-c(1,ncol(lastorder))]){
+  a1 = simplefun2(lastorder[,c(i,"GROUP")])[[1]]
+  a2 = simplefun2(lastorder[,c(i,"GROUP")])[[2]]$p.value
+  res[[k]] = list(round(a1,2),round(a2,2))
+  k=k+1
+} 
+res
+```
+
+### Medication for each patient
+#### Table One
+```{r medication, echo=FALSE,message=FALSE}
+medi <- fread(input ="/cpm/projects/pro00065513_HospitalOutcomes/EWS/DATA/rawdata/DUH/tbl_med_2#6#17.txt" )
+
+
+Highevent$Group = "High & Event"
+Lowevent$Group = "Low & Event"
+HighNoevent$Group = "High & NoEvent"
+LowNoevent$Group = "Low & NoEvent"
+
+gevent = rbind(Highevent, Lowevent, HighNoevent, LowNoevent)
+med.event <- gevent[gevent$ID %in% medi$PAT_ENC_CSN_ID,]
+
+cromedi<-filter(medi,PAT_ENC_CSN_ID %in% med.event$ID)
+theclass<- select(cromedi,PAT_ENC_CSN_ID, THERA_CLASS)
+theclass$value = 1
+tc <- theclass %>% group_by(PAT_ENC_CSN_ID) %>% distinct() %>% spread(key = THERA_CLASS,value = value) %>% mutate_all(funs(replace(.,is.na(.),0)))
+
+new.tc = tc %>% arrange(PAT_ENC_CSN_ID)
+class(new.tc)<-"data.frame"
+new.tc = cbind(new.tc, med.event %>% group_by(ID) %>% summarise(Group = unique(Group)) %>% arrange(ID) %>% select(Group))
+new.tc= apply(new.tc,2,factor)
+new.tc = as.data.frame(new.tc)
+colnames(new.tc)[7] <-"PSYCHOTHERAPEUTIC_DRUGS"
+table5  = CreateTableOne( vars =  colnames(new.tc)[-c(1,ncol(new.tc))], strata = "Group", data = new.tc)
+print(table5, showAllLevels = TRUE)
+
+
+```
+#### Plots for Medication
+```{r med plots, echo=FALSE,message=FALSE}
+gathered_med = gather(new.tc[,-1],key =  'Group',value = "Medication")
+colnames(gathered_med) = c("Group","Medication","Count")
+plot_data_med = as.data.frame(table(gathered_med))
+plot_data_med = plot_data_med[plot_data_med$Count == 1,]
+plot_data_med = rbind(plot_data_med %>% filter(Group == "High & Event") %>% mutate(Freq = Freq/nrow(new.tc%>%filter(Group == "High & Event"))),plot_data_med %>% filter(Group == "Low & Event") %>% mutate(Freq = Freq/nrow(new.tc%>%filter(Group =="Low & Event"))),plot_data_med %>% filter(Group == "High & NoEvent") %>% mutate(Freq = Freq/nrow(new.tc%>%filter(Group == "High & NoEvent"))),plot_data_med %>% filter(Group == "Low & NoEvent") %>% mutate(Freq = Freq/nrow(new.tc%>%filter(Group =="Low & NoEvent"))))
+
+g11<- ggplot(plot_data_med,aes(x = Medication, y = Freq)) + geom_bar(aes(fill = Group), position = 'dodge', stat = 'identity') + ggtitle(label = "Medication distribution among Different group")
+g11+theme(
+      axis.text.x  = element_text(size = 7))
+
+```
+
